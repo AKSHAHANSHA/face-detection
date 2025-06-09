@@ -1,72 +1,48 @@
 import streamlit as st
 import face_recognition
-import cv2
 import numpy as np
+import cv2
 import os
-from datetime import datetime
 
-# Attendance folder and file
-IMAGE_FOLDER = "static/IMAGE_FILES"
-ATTENDANCE_FILE = "attendance.csv"
+st.title("Face Recognition App")
+
+image_files_dir = 'static/IMAGE_FILES'
 
 # Load known faces
-@st.cache_data
-def load_known_faces(folder):
-    encodings = []
-    names = []
-    for file in os.listdir(folder):
-        path = os.path.join(folder, file)
-        img = face_recognition.load_image_file(path)
-        encoding = face_recognition.face_encodings(img)[0]
-        encodings.append(encoding)
-        names.append(os.path.splitext(file)[0])
-    return encodings, names
+known_faces = []
+known_names = []
 
-# Save attendance
-def mark_attendance(name):
-    if not os.path.exists(ATTENDANCE_FILE):
-        open(ATTENDANCE_FILE, "w").close()
+for file in os.listdir(image_files_dir):
+    if file.lower().endswith(('png', 'jpg', 'jpeg')):
+        img_path = os.path.join(image_files_dir, file)
+        image = face_recognition.load_image_file(img_path)
+        encodings = face_recognition.face_encodings(image)
+        if encodings:
+            known_faces.append(encodings[0])
+            known_names.append(file.split('.')[0])
 
-    with open(ATTENDANCE_FILE, "r+") as f:
-        lines = f.readlines()
-        names = [line.split(",")[0] for line in lines]
-        if name not in names:
-            now = datetime.now().strftime("%H:%M:%S")
-            f.write(f"{name},{now}\n")
+uploaded_file = st.file_uploader("Upload a picture for recognition", type=["jpg", "png", "jpeg"])
 
-# UI
-st.title("👨‍🏫 Face Recognition Attendance System")
-st.markdown("Click the button below to start webcam.")
+if uploaded_file is not None:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    st.image(img_rgb, caption="Uploaded Image", use_column_width=True)
 
-if st.button("Start Camera"):
-    encodings, names = load_known_faces(IMAGE_FOLDER)
-    stframe = st.empty()
+    locations = face_recognition.face_locations(img_rgb)
+    encodings = face_recognition.face_encodings(img_rgb, locations)
 
-    cap = cv2.VideoCapture(0)
+    for (top, right, bottom, left), face_encoding in zip(locations, encodings):
+        matches = face_recognition.compare_faces(known_faces, face_encoding)
+        name = "Unknown"
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        face_distances = face_recognition.face_distance(known_faces, face_encoding)
+        if matches and len(face_distances) > 0:
+            best_match_index = np.argmin(face_distances)
+            if matches[best_match_index]:
+                name = known_names[best_match_index]
 
-        small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+        cv2.rectangle(img_rgb, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(img_rgb, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        locations = face_recognition.face_locations(rgb)
-        encodes = face_recognition.face_encodings(rgb, locations)
-
-        for encode, loc in zip(encodes, locations):
-            matches = face_recognition.compare_faces(encodings, encode)
-            dist = face_recognition.face_distance(encodings, encode)
-            match_index = np.argmin(dist)
-
-            if matches[match_index]:
-                name = names[match_index].upper()
-                mark_attendance(name)
-                y1, x2, y2, x1 = [v * 4 for v in loc]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, name, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-
-        stframe.image(frame, channels="BGR")
-
-    cap.release()
+    st.image(img_rgb, caption="Face Recognition Result", use_column_width=True)
